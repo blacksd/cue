@@ -318,6 +318,13 @@ b: {}`,
 		name:      "Empty struct",
 		cueExpr:   ``,
 		wantError: `koala: top-level struct has no fields`,
+	}, {
+		name: "Mixed content: text and children",
+		cueExpr: `root: {
+	$$: "some text"
+	child: $$: "value"
+}`,
+		wantError: `koala: element "root" has both text content ($$) and child elements`,
 	}}
 
 	for _, test := range tests {
