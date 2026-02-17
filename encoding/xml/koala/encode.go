@@ -17,6 +17,7 @@ package koala
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"cuelang.org/go/cue"
@@ -24,12 +25,23 @@ import (
 
 // Encoder writes CUE values as XML using the koala encoding.
 type Encoder struct {
-	writer io.Writer
+	w       io.Writer
+	indents []string // cached indentation strings, grown on demand
 }
 
 // NewEncoder creates an encoder that writes XML to w.
 func NewEncoder(w io.Writer) *Encoder {
-	return &Encoder{writer: w}
+	return &Encoder{w: w}
+}
+
+// indent returns the indentation string for the given depth,
+// caching computed strings so repeated calls at the same depth
+// do not allocate.
+func (enc *Encoder) indent(depth int) string {
+	for len(enc.indents) <= depth {
+		enc.indents = append(enc.indents, strings.Repeat("\t", len(enc.indents)))
+	}
+	return enc.indents[depth]
 }
 
 // Encode writes v as a koala-encoded XML document.
@@ -37,7 +49,7 @@ func NewEncoder(w io.Writer) *Encoder {
 // becomes the root XML element name.
 func (enc *Encoder) Encode(v cue.Value) error {
 	// Emit XML declaration.
-	if _, err := fmt.Fprint(enc.writer, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"); err != nil {
+	if _, err := io.WriteString(enc.w, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"); err != nil {
 		return err
 	}
 
@@ -109,10 +121,16 @@ func (enc *Encoder) encodeStruct(name string, v cue.Value, depth int) error {
 		}
 	}
 
-	indent := strings.Repeat("\t", depth)
+	w := enc.w
 
 	// Build start tag with attributes.
-	if _, err := fmt.Fprintf(enc.writer, "%s<%s", indent, name); err != nil {
+	if _, err := io.WriteString(w, enc.indent(depth)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "<"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, name); err != nil {
 		return err
 	}
 	for _, a := range attrs {
@@ -121,25 +139,56 @@ func (enc *Encoder) encodeStruct(name string, v cue.Value, depth int) error {
 		if err != nil {
 			return fmt.Errorf("koala: converting attribute %q to string: %w", attrName, err)
 		}
-		if _, err := fmt.Fprintf(enc.writer, " %s=\"%s\"", attrName, escapeAttr(attrVal)); err != nil {
+		if _, err := io.WriteString(w, " "); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, attrName); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "=\""); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, escapeAttr(attrVal)); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "\""); err != nil {
 			return err
 		}
 	}
 
 	// Self-closing tag: no text content and no children.
 	if textContent == nil && len(children) == 0 {
-		_, err := fmt.Fprint(enc.writer, "/>\n")
+		_, err := io.WriteString(w, "/>\n")
 		return err
 	}
 
+	// Mixed content (text content and child elements) is not representable
+	// in XML without mixed-content mode, which koala does not support.
+	// Mirror the decoder's rejection of this case.
+	if textContent != nil && len(children) > 0 {
+		return fmt.Errorf("koala: element %q has both text content ($$) and child elements", name)
+	}
+
 	// Inline text content (no child elements).
-	if textContent != nil && len(children) == 0 {
-		_, err := fmt.Fprintf(enc.writer, ">%s</%s>\n", escapeText(*textContent), name)
+	if textContent != nil {
+		if _, err := io.WriteString(w, ">"); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, escapeText(*textContent)); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, "</"); err != nil {
+			return err
+		}
+		if _, err := io.WriteString(w, name); err != nil {
+			return err
+		}
+		_, err := io.WriteString(w, ">\n")
 		return err
 	}
 
 	// Element with children.
-	if _, err := fmt.Fprint(enc.writer, ">\n"); err != nil {
+	if _, err := io.WriteString(w, ">\n"); err != nil {
 		return err
 	}
 	for _, child := range children {
@@ -147,7 +196,16 @@ func (enc *Encoder) encodeStruct(name string, v cue.Value, depth int) error {
 			return err
 		}
 	}
-	_, err = fmt.Fprintf(enc.writer, "%s</%s>\n", indent, name)
+	if _, err := io.WriteString(w, enc.indent(depth)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "</"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, name); err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, ">\n")
 	return err
 }
 
@@ -172,8 +230,29 @@ func (enc *Encoder) encodeScalar(name string, v cue.Value, depth int) error {
 	if err != nil {
 		return err
 	}
-	indent := strings.Repeat("\t", depth)
-	_, err = fmt.Fprintf(enc.writer, "%s<%s>%s</%s>\n", indent, name, escapeText(s), name)
+	w := enc.w
+	if _, err := io.WriteString(w, enc.indent(depth)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "<"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, name); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, ">"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, escapeText(s)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "</"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, name); err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, ">\n")
 	return err
 }
 
@@ -187,16 +266,13 @@ func valueToStr(v cue.Value) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if b {
-			return "true", nil
-		}
-		return "false", nil
+		return strconv.FormatBool(b), nil
 	case cue.IntKind:
 		i, err := v.Int64()
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%d", i), nil
+		return strconv.FormatInt(i, 10), nil
 	case cue.FloatKind:
 		d, _ := v.Decimal()
 		return d.String(), nil
@@ -207,6 +283,9 @@ func valueToStr(v cue.Value) (string, error) {
 
 // escapeText escapes special XML characters in text content.
 func escapeText(s string) string {
+	if !strings.ContainsAny(s, "&<>") {
+		return s
+	}
 	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
@@ -215,6 +294,9 @@ func escapeText(s string) string {
 
 // escapeAttr escapes special XML characters in attribute values.
 func escapeAttr(s string) string {
+	if !strings.ContainsAny(s, "&<>\"") {
+		return s
+	}
 	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
