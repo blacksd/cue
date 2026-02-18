@@ -279,6 +279,31 @@ func TestEncode(t *testing.T) {
 	$$:     "\n\thello\n"
 }`,
 		wantXML: "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<note alpha=\"abcd\">\n\thello\n</note>\n",
+	}, {
+		name: "Default values resolved",
+		cueExpr: `root: {
+	"$xmlns:xsi": *"http://www.w3.org/2001/XMLSchema-instance" | string
+	item: *"default-value" | string
+}`,
+		wantXML: `<?xml version="1.0" encoding="UTF-8"?>
+<root xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<item>default-value</item>
+</root>
+`,
+	}, {
+		name: "Default values on nested scalar types",
+		cueExpr: `config: {
+	enabled: *true | bool
+	count:   *42 | int
+	ratio:   *3.14 | float
+}`,
+		wantXML: `<?xml version="1.0" encoding="UTF-8"?>
+<config>
+	<enabled>true</enabled>
+	<count>42</count>
+	<ratio>3.14</ratio>
+</config>
+`,
 	}}
 
 	for _, test := range tests {

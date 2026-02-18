@@ -53,6 +53,9 @@ func (enc *Encoder) Encode(v cue.Value) error {
 		return err
 	}
 
+	// Resolve default markers so that *X | Y becomes X.
+	v, _ = v.Default()
+
 	// The top-level value must be a struct with exactly one field (the root element).
 	if v.Kind() != cue.StructKind {
 		return fmt.Errorf("koala: top-level value must be a struct, got %v", v.Kind())
@@ -75,6 +78,7 @@ func (enc *Encoder) Encode(v cue.Value) error {
 
 // encodeValue dispatches encoding based on the CUE value kind.
 func (enc *Encoder) encodeValue(name string, v cue.Value, depth int) error {
+	v, _ = v.Default()
 	switch v.Kind() {
 	case cue.StructKind:
 		return enc.encodeStruct(name, v, depth)
@@ -258,6 +262,7 @@ func (enc *Encoder) encodeScalar(name string, v cue.Value, depth int) error {
 
 // valueToStr converts a CUE scalar value to its string representation for XML output.
 func valueToStr(v cue.Value) (string, error) {
+	v, _ = v.Default()
 	switch v.Kind() {
 	case cue.StringKind:
 		return v.String()
