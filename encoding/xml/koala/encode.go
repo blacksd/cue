@@ -83,6 +83,9 @@ func (enc *Encoder) encodeValue(name string, v cue.Value, depth int) error {
 	case cue.StructKind:
 		return enc.encodeStruct(name, v, depth)
 	case cue.ListKind:
+		if isContainer(v) {
+			return enc.encodeContainer(name, v, depth)
+		}
 		return enc.encodeList(name, v, depth)
 	case cue.StringKind, cue.IntKind, cue.FloatKind, cue.BoolKind:
 		return enc.encodeScalar(name, v, depth)
@@ -226,6 +229,88 @@ func (enc *Encoder) encodeList(name string, v cue.Value, depth int) error {
 		}
 	}
 	return nil
+}
+
+// encodeContainer writes a single wrapper element whose children are the
+// unwrapped fields of each list item. Each item must be a struct.
+// This is triggered by the @koala(container) attribute on a list field.
+//
+// Given chain: [{a: {$$: "1"}}, {b: {$$: "2"}}] @koala(container), it produces:
+//
+//	<chain>
+//		<a>1</a>
+//		<b>2</b>
+//	</chain>
+func (enc *Encoder) encodeContainer(name string, v cue.Value, depth int) error {
+	iter, err := v.List()
+	if err != nil {
+		return err
+	}
+
+	// Collect items; empty list emits nothing.
+	var items []cue.Value
+	for iter.Next() {
+		items = append(items, iter.Value())
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	w := enc.w
+
+	// Open container element.
+	if _, err := io.WriteString(w, enc.indent(depth)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "<"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, name); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, ">\n"); err != nil {
+		return err
+	}
+
+	// Emit each struct item's fields directly inside the container.
+	for _, item := range items {
+		item, _ = item.Default()
+		if item.Kind() != cue.StructKind {
+			return fmt.Errorf("koala: container element %q: list items must be structs, got %v", name, item.Kind())
+		}
+		fields, err := item.Fields()
+		if err != nil {
+			return err
+		}
+		for fields.Next() {
+			if err := enc.encodeValue(fields.Selector().Unquoted(), fields.Value(), depth+1); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Close container element.
+	if _, err := io.WriteString(w, enc.indent(depth)); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, "</"); err != nil {
+		return err
+	}
+	if _, err := io.WriteString(w, name); err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, ">\n")
+	return err
+}
+
+// isContainer reports whether v carries a @koala(container) field attribute.
+func isContainer(v cue.Value) bool {
+	a := v.Attribute("koala")
+	if a.Err() != nil {
+		return false
+	}
+	s, err := a.String(0)
+	return err == nil && s == "container"
 }
 
 // encodeScalar writes a leaf XML element containing a stringified scalar value.
