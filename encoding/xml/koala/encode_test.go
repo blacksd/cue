@@ -304,6 +304,106 @@ func TestEncode(t *testing.T) {
 	<ratio>3.14</ratio>
 </config>
 `,
+	}, {
+		name: "Container wraps list items in single element",
+		cueExpr: `root: {
+	items: [{a: $$: "one"}, {a: $$: "two"}] @koala(container)
+}`,
+		wantXML: `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+	<items>
+		<a>one</a>
+		<a>two</a>
+	</items>
+</root>
+`,
+	}, {
+		name: "Container with heterogeneous struct items",
+		cueExpr: `root: {
+	preprocessors: [{
+		"regex-preprocessor": pattern: $$: "^client-(.*)"
+	}, {
+		"set-string-preprocessor": {
+			variable: $$: "auth-key"
+			value: $$:    "admin"
+		}
+	}] @koala(container)
+}`,
+		wantXML: `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+	<preprocessors>
+		<regex-preprocessor>
+			<pattern>^client-(.*)</pattern>
+		</regex-preprocessor>
+		<set-string-preprocessor>
+			<variable>auth-key</variable>
+			<value>admin</value>
+		</set-string-preprocessor>
+	</preprocessors>
+</root>
+`,
+	}, {
+		name: "Container and normal list coexist",
+		cueExpr: `root: {
+	wrapped: [{x: $$: "1"}, {x: $$: "2"}] @koala(container)
+	repeated: [{$$: "a"}, {$$: "b"}]
+}`,
+		wantXML: `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+	<wrapped>
+		<x>1</x>
+		<x>2</x>
+	</wrapped>
+	<repeated>a</repeated>
+	<repeated>b</repeated>
+</root>
+`,
+	}, {
+		name: "Container attribute survives definition unification",
+		cueExpr: `
+#Item: { name: {$$: string} }
+#Config: {
+	chain: [...#Item] @koala(container)
+}
+root: #Config & {
+	chain: [{name: $$: "first"}, {name: $$: "second"}]
+}`,
+		wantXML: `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+	<chain>
+		<name>first</name>
+		<name>second</name>
+	</chain>
+</root>
+`,
+	}, {
+		name: "Nested containers",
+		cueExpr: `root: {
+	outer: [{
+		inner: [{item: $$: "a"}, {item: $$: "b"}] @koala(container)
+	}] @koala(container)
+}`,
+		wantXML: `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+	<outer>
+		<inner>
+			<item>a</item>
+			<item>b</item>
+		</inner>
+	</outer>
+</root>
+`,
+	}, {
+		name: "Empty container emits nothing",
+		cueExpr: `root: {
+	items: [] @koala(container)
+	other: $$: "present"
+}`,
+		wantXML: `<?xml version="1.0" encoding="UTF-8"?>
+<root>
+	<other>present</other>
+</root>
+`,
 	}}
 
 	for _, test := range tests {
@@ -350,6 +450,10 @@ b: {}`,
 	child: $$: "value"
 }`,
 		wantError: `koala: element "root" has both text content ($$) and child elements`,
+	}, {
+		name:      "Container with scalar list items",
+		cueExpr:   `root: items: ["a", "b"] @koala(container)`,
+		wantError: `koala: container element "items": list items must be structs`,
 	}}
 
 	for _, test := range tests {
