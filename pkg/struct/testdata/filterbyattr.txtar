@@ -1,0 +1,143 @@
+-- in.cue --
+import "struct"
+
+// Basic: filter by attribute value with pipe-separated actors.
+basic: struct.FilterByAttr({
+	name: "Alice" @visibility(actor="product|customer")
+	age:  30      @visibility(actor="internal")
+	email: "a@b"  @visibility(actor="customer")
+}, "visibility", "customer")
+
+// Fields without the attribute are included by default.
+noattr: struct.FilterByAttr({
+	name:  "Alice" @visibility(actor="customer")
+	plain: "kept"
+	age:   30      @visibility(actor="internal")
+}, "visibility", "customer")
+
+// Recursive: nested structs are filtered too.
+nested: struct.FilterByAttr({
+	info: {
+		name: "Alice" @visibility(actor="customer")
+		ssn:  "123"   @visibility(actor="internal")
+	}
+	meta: "ok"
+}, "visibility", "customer")
+
+// Optional fields remain optional.
+optional: struct.FilterByAttr({
+	name?: string @visibility(actor="customer")
+	age?:  int    @visibility(actor="internal")
+	city?: string
+}, "visibility", "customer")
+
+// Positional attribute value (no key).
+positional: struct.FilterByAttr({
+	name: "Alice" @visibility("customer|product")
+	age:  30      @visibility("internal")
+}, "visibility", "customer")
+
+// All fields excluded produces empty struct.
+empty: struct.FilterByAttr({
+	a: 1 @visibility(actor="internal")
+	b: 2 @visibility(actor="internal")
+}, "visibility", "customer")
+
+// Regex pattern: match multiple values.
+regex: struct.FilterByAttr({
+	a: 1 @visibility(actor="customer")
+	b: 2 @visibility(actor="product")
+	c: 3 @visibility(actor="internal")
+}, "visibility", "customer|product")
+
+// Regex pattern: prefix match with explicit anchor.
+regexPrefix: struct.FilterByAttr({
+	a: 1 @tier("starter")
+	b: 2 @tier("standard")
+	c: 3 @tier("enterprise")
+}, "tier", "^sta")
+
+// Key name must not match as a value.
+keyNotValue: struct.FilterByAttr({
+	a: 1 @visibility(actor="customer")
+	b: 2 @visibility(actor="internal")
+}, "visibility", "actor")
+
+// HasAttr: include only fields that carry the attribute.
+hasattr: struct.HasAttr({
+	name: "Alice" @deprecated()
+	age:  30
+	city: "NYC"   @deprecated()
+}, "deprecated")
+
+// HasAttr recursive: nested fields without the attribute are excluded.
+hasattrNested: struct.HasAttr({
+	info: {
+		name: "Alice" @marker(yes)
+		age:  30
+	} @marker(yes)
+	meta: "ok"
+}, "marker")
+
+-- out/structs-v3 --
+// Basic: filter by attribute value with pipe-separated actors.
+basic: {
+	name:  "Alice"
+	email: "a@b"
+}
+
+// Fields without the attribute are included by default.
+noattr: {
+	name:  "Alice"
+	plain: "kept"
+}
+
+// Recursive: nested structs are filtered too.
+nested: {
+	info: {
+		name: "Alice"
+	}
+	meta: "ok"
+}
+
+// Optional fields remain optional.
+optional: {
+	name?: string
+	city?: string
+}
+
+// Positional attribute value (no key).
+positional: {
+	name: "Alice"
+}
+
+// All fields excluded produces empty struct.
+empty: {}
+
+// Regex pattern: match multiple values.
+regex: {
+	a: 1
+	b: 2
+}
+
+// Regex pattern: prefix match with explicit anchor.
+regexPrefix: {
+	a: 1
+	b: 2
+}
+
+// Key name must not match as a value.
+keyNotValue: {}
+
+// HasAttr: include only fields that carry the attribute.
+hasattr: {
+	name: "Alice"
+	city: "NYC"
+}
+
+// HasAttr recursive: nested fields without the attribute are excluded.
+hasattrNested: {
+	info: {
+		name: "Alice"
+	}
+}
