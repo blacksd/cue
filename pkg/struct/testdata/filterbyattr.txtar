@@ -1,53 +1,47 @@
 -- in.cue --
 import "struct"
 
-// Basic: filter by attribute value with pipe-separated actors.
+// Basic: filter by attribute value with pipe-separated values.
 basic: struct.FilterByAttr({
-	name: "Alice" @visibility(actor="product|customer")
-	age:  30      @visibility(actor="internal")
-	email: "a@b"  @visibility(actor="customer")
+	name: "Alice" @visibility("product|customer")
+	age:  30      @visibility("internal")
+	email: "a@b"  @visibility("customer")
 }, "visibility", "customer")
 
 // Fields without the attribute are included by default.
 noattr: struct.FilterByAttr({
-	name:  "Alice" @visibility(actor="customer")
+	name:  "Alice" @visibility("customer")
 	plain: "kept"
-	age:   30      @visibility(actor="internal")
+	age:   30      @visibility("internal")
 }, "visibility", "customer")
 
 // Recursive: nested structs are filtered too.
 nested: struct.FilterByAttr({
 	info: {
-		name: "Alice" @visibility(actor="customer")
-		ssn:  "123"   @visibility(actor="internal")
+		name: "Alice" @visibility("customer")
+		ssn:  "123"   @visibility("internal")
 	}
 	meta: "ok"
 }, "visibility", "customer")
 
 // Optional fields remain optional.
 optional: struct.FilterByAttr({
-	name?: string @visibility(actor="customer")
-	age?:  int    @visibility(actor="internal")
+	name?: string @visibility("customer")
+	age?:  int    @visibility("internal")
 	city?: string
-}, "visibility", "customer")
-
-// Positional attribute value (no key).
-positional: struct.FilterByAttr({
-	name: "Alice" @visibility("customer|product")
-	age:  30      @visibility("internal")
 }, "visibility", "customer")
 
 // All fields excluded produces empty struct.
 empty: struct.FilterByAttr({
-	a: 1 @visibility(actor="internal")
-	b: 2 @visibility(actor="internal")
+	a: 1 @visibility("internal")
+	b: 2 @visibility("internal")
 }, "visibility", "customer")
 
 // Regex pattern: match multiple values.
 regex: struct.FilterByAttr({
-	a: 1 @visibility(actor="customer")
-	b: 2 @visibility(actor="product")
-	c: 3 @visibility(actor="internal")
+	a: 1 @visibility("customer")
+	b: 2 @visibility("product")
+	c: 3 @visibility("internal")
 }, "visibility", "customer|product")
 
 // Regex pattern: prefix match with explicit anchor.
@@ -56,6 +50,33 @@ regexPrefix: struct.FilterByAttr({
 	b: 2 @tier("standard")
 	c: 3 @tier("enterprise")
 }, "tier", "^sta")
+
+// Regex: auto-anchored pattern rejects partial matches.
+regexExact: struct.FilterByAttr({
+	a: 1 @tier("starter")
+	b: 2 @tier("start")
+	c: 3 @tier("pro-starter")
+}, "tier", "starter")
+
+// Regex: suffix match with explicit anchor.
+regexSuffix: struct.FilterByAttr({
+	a: 1 @env("staging")
+	b: 2 @env("production")
+	c: 3 @env("testing")
+}, "env", "ing$")
+
+// Regex: dot is treated as regex metachar, not literal.
+regexDot: struct.FilterByAttr({
+	a: 1 @version("v2.0")
+	b: 2 @version("v2x0")
+	c: 3 @version("v3.0")
+}, "version", "v2.0")
+
+// Keyed attribute values: only the value part is matched, never the key.
+keyedValue: struct.FilterByAttr({
+	a: 1 @visibility(actor="customer")
+	b: 2 @visibility(actor="internal")
+}, "visibility", "customer")
 
 // Key name must not match as a value.
 keyNotValue: struct.FilterByAttr({
@@ -79,8 +100,16 @@ hasattrNested: struct.HasAttr({
 	meta: "ok"
 }, "marker")
 
+// Named type references must resolve in the output.
+#Constraint: int & >=1 & <=100
+
+namedRef: struct.FilterByAttr({
+	a: #Constraint @visibility("customer")
+	b: string      @visibility("product")
+}, "visibility", "customer")
+
 -- out/structs-v3 --
-// Basic: filter by attribute value with pipe-separated actors.
+// Basic: filter by attribute value with pipe-separated values.
 basic: {
 	name:  "Alice"
 	email: "a@b"
@@ -106,11 +135,6 @@ optional: {
 	city?: string
 }
 
-// Positional attribute value (no key).
-positional: {
-	name: "Alice"
-}
-
 // All fields excluded produces empty struct.
 empty: {}
 
@@ -124,6 +148,28 @@ regex: {
 regexPrefix: {
 	a: 1
 	b: 2
+}
+
+// Regex: auto-anchored pattern rejects partial matches.
+regexExact: {
+	a: 1
+}
+
+// Regex: suffix match with explicit anchor.
+regexSuffix: {
+	a: 1
+	c: 3
+}
+
+// Regex: dot is treated as regex metachar, not literal.
+regexDot: {
+	a: 1
+	b: 2
+}
+
+// Keyed attribute values: only the value part is matched, never the key.
+keyedValue: {
+	a: 1
 }
 
 // Key name must not match as a value.
@@ -140,4 +186,10 @@ hasattrNested: {
 	info: {
 		name: "Alice"
 	}
+}
+
+// Named type references must resolve in the output.
+#Constraint: uint & >=1 & <=100
+namedRef: {
+	a: uint & >=1 & <=100
 }

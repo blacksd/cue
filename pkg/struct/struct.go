@@ -151,7 +151,7 @@ func filterStruct(v cue.Value, attrName string, re *regexp.Regexp) (*ast.StructL
 			}
 			val = filtered
 		} else {
-			val = fieldVal.Syntax(cue.Raw()).(ast.Expr)
+			val = fieldVal.Syntax(cue.Raw(), cue.InlineImports(true)).(ast.Expr)
 		}
 
 		f := &ast.Field{Label: label, Value: val}
