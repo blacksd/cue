@@ -168,7 +168,12 @@ func buildFilteredVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, attrN
 		matched := attrMatches(fieldVal, attrName, re, depth)
 		if !matched && depth == 0 && fieldVal.IncompleteKind() == cue.StructKind {
 			// Unannotated struct at root: include if any descendant matches.
-			matched = hasMatchingDescendant(fieldVal, attrName, re)
+			// Only for truly unannotated fields — if the field carries the
+			// attribute but doesn't match, respect the explicit annotation.
+			a := fieldVal.Attribute(attrName)
+			if a.Err() != nil {
+				matched = hasMatchingDescendant(fieldVal, attrName, re)
+			}
 		}
 		if !matched {
 			continue

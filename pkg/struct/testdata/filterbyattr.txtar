@@ -153,6 +153,41 @@ unannotatedParent: struct.FilterByAttr({
 	plain: "dropped"
 }, "visibility", "customer")
 
+// Unannotated struct at root with no matching descendant is excluded.
+unannotatedNoMatch: struct.FilterByAttr({
+	wrapper: {
+		a: int @visibility("internal")
+		b: int @visibility("internal")
+	}
+	plain: "also dropped"
+}, "visibility", "customer")
+
+// Conflicting parent/child: parent blocks access to differently-tagged child.
+conflictingTags: struct.FilterByAttr({
+	data: {
+		inner: string @visibility("customer")
+	} @visibility("product")
+}, "visibility", "customer")
+
+// Unannotated non-struct fields at depth > 0 pass through.
+nestedPassthrough: struct.FilterByAttr({
+	config: {
+		name:    string @visibility("customer")
+		version: int
+		debug:   bool
+	} @visibility("customer")
+}, "visibility", "customer")
+
+// Deeply nested: unannotated structs propagate matching descendants upward.
+deepNested: struct.FilterByAttr({
+	level1: {
+		level2: {
+			target: string @visibility("customer")
+			noise:  int    @visibility("internal")
+		}
+	}
+}, "visibility", "customer")
+
 // HasAttr on struct with definition-typed field.
 hasattrDef: struct.HasAttr({
 	name:   string      @tagged()
@@ -308,6 +343,30 @@ nestedDefProduct: {
 unannotatedParent: {
 	wrapper: {
 		visible: string
+	}
+}
+
+// Unannotated struct at root with no matching descendant is excluded.
+unannotatedNoMatch: {}
+
+// Conflicting parent/child: parent blocks access to differently-tagged child.
+conflictingTags: {}
+
+// Unannotated non-struct fields at depth > 0 pass through.
+nestedPassthrough: {
+	config: {
+		name:    string
+		version: int
+		debug:   bool
+	}
+}
+
+// Deeply nested: unannotated structs propagate matching descendants upward.
+deepNested: {
+	level1: {
+		level2: {
+			target: string
+		}
 	}
 }
 
