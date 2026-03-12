@@ -151,7 +151,10 @@ func filterStruct(v cue.Value, attrName string, re *regexp.Regexp) (*ast.StructL
 		val := fieldVal.Syntax(cue.Raw(), cue.InlineImports(true)).(ast.Expr)
 
 		// For struct-typed values, recursively filter the AST by attribute.
-		if sl, ok := val.(*ast.StructLit); ok {
+		// Only filter actual structs — InlineImports may wrap non-struct
+		// values (lists, disjunctions) in a StructLit to hold let clauses
+		// for cross-package references; those must be kept intact.
+		if sl, ok := val.(*ast.StructLit); ok && fieldVal.IncompleteKind() == cue.StructKind {
 			val = filterAST(sl, attrName, re)
 		}
 
@@ -171,6 +174,9 @@ func filterAST(sl *ast.StructLit, attrName string, re *regexp.Regexp) *ast.Struc
 	for _, elt := range sl.Elts {
 		f, ok := elt.(*ast.Field)
 		if !ok {
+			// Preserve let clauses, ellipsis, comments — they may be
+			// referenced by surviving fields.
+			result.Elts = append(result.Elts, elt)
 			continue
 		}
 		if !astAttrMatches(f, attrName, re) {
