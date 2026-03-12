@@ -108,6 +108,17 @@ namedRef: struct.FilterByAttr({
 	b: string      @visibility("product")
 }, "visibility", "customer")
 
+// Real-world use case: product and customer views of a config definition.
+#Config: {
+	replicas:       int    @visibility("product")
+	maxConnections: int    @visibility("product|customer")
+	maxQos:         int    @visibility("customer")
+	name:           string
+}
+
+productView:  struct.FilterByAttr(#Config, "visibility", "product")
+customerView: struct.FilterByAttr(#Config, "visibility", "customer")
+
 -- out/structs-v3 --
 // Basic: filter by attribute value with pipe-separated values.
 basic: {
@@ -192,4 +203,22 @@ hasattrNested: {
 #Constraint: uint & >=1 & <=100
 namedRef: {
 	a: uint & >=1 & <=100
+}
+
+// Real-world use case: product and customer views of a config definition.
+#Config: {
+	replicas:       int @visibility("product")
+	maxConnections: int @visibility("product|customer")
+	maxQos:         int @visibility("customer")
+	name:           string
+}
+productView: {
+	replicas:       int
+	maxConnections: int
+	name:           string
+}
+customerView: {
+	maxConnections: int
+	maxQos:         int
+	name:           string
 }
