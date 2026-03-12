@@ -25,6 +25,7 @@ import (
 	"cuelang.org/go/cue/errors"
 	"cuelang.org/go/cue/token"
 	"cuelang.org/go/internal/core/adt"
+	"cuelang.org/go/internal/core/export"
 	"cuelang.org/go/internal/pkg"
 	"cuelang.org/go/internal/value"
 )
@@ -78,8 +79,8 @@ func HasAttr(s pkg.Schema, attrName string) (ast.Expr, error) {
 	return hasAttr(ctx, s, attrName)
 }
 
-func hasAttr(_ *adt.OpContext, s pkg.Schema, attrName string) (ast.Expr, error) {
-	return filterStruct(s, attrName, nil)
+func hasAttr(ctx *adt.OpContext, s pkg.Schema, attrName string) (ast.Expr, error) {
+	return filterVertexByAttr(ctx, s, attrName, nil)
 }
 
 // FilterByAttr returns a copy of s containing only fields whose
@@ -103,12 +104,12 @@ func FilterByAttr(s pkg.Schema, attrName, pattern string) (ast.Expr, error) {
 	return filterByAttr(ctx, s, attrName, pattern)
 }
 
-func filterByAttr(_ *adt.OpContext, s pkg.Schema, attrName, pattern string) (ast.Expr, error) {
+func filterByAttr(ctx *adt.OpContext, s pkg.Schema, attrName, pattern string) (ast.Expr, error) {
 	re, err := compilePattern(pattern)
 	if err != nil {
 		return nil, fmt.Errorf("FilterByAttr: invalid pattern: %w", err)
 	}
-	return filterStruct(s, attrName, re)
+	return filterVertexByAttr(ctx, s, attrName, re)
 }
 
 // compilePattern compiles a regex pattern, auto-anchoring it if the
@@ -120,79 +121,94 @@ func compilePattern(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(pattern)
 }
 
-// filterStruct filters v's fields by attribute. If re is nil (HasAttr mode),
-// only fields that carry @attrName are included. If re is non-nil
-// (FilterByAttr mode), fields without @attrName are included by default
-// and fields with @attrName are included only when a pipe-separated
-// segment of the attribute value matches re.
-//
-// Field values are obtained via Value.Syntax with InlineImports on each
-// individual field value, ensuring all cross-package references are
-// resolved inline. For struct-typed field values, the resulting AST is
-// further filtered recursively.
-func filterStruct(v cue.Value, attrName string, re *regexp.Regexp) (*ast.StructLit, error) {
-	result := &ast.StructLit{}
-	iter, err := v.Fields(cue.Optional(true))
-	if err != nil {
-		return nil, err
+// filterVertexByAttr builds a filtered vertex containing only matching arcs,
+// then exports it through the standard export pipeline with InlineImports
+// to produce a self-contained AST expression. This approach correctly handles
+// cross-package references because the export pivotter only discovers
+// references for surviving fields — no orphaned let clauses.
+func filterVertexByAttr(ctx *adt.OpContext, v cue.Value, attrName string, re *regexp.Regexp) (ast.Expr, error) {
+	r, src := value.ToInternal(v)
+	filtered := buildFilteredVertex(ctx, src, v, attrName, re)
+
+	p := export.Profile{
+		Simplify:      true,
+		ShowOptional:  true,
+		InlineImports: true,
 	}
+
+	f, exportErr := p.Vertex(r, "_", filtered)
+	if exportErr != nil {
+		return nil, fmt.Errorf("FilterByAttr: export error: %v", exportErr)
+	}
+
+	return fileToExpr(f), nil
+}
+
+// buildFilteredVertex creates a new vertex containing only arcs whose fields
+// match the attribute filter. For struct-typed arcs, it recurses to filter
+// nested fields as well.
+func buildFilteredVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, attrName string, re *regexp.Regexp) *adt.Vertex {
+	filtered := src.Clone()
+	filtered.Arcs = nil
+	filtered.Structs = nil
+	filtered.BaseValue = &adt.StructMarker{}
+
+	sl := &adt.StructLit{}
+
+	iter, _ := v.Fields(cue.Optional(true))
 	for iter.Next() {
 		sel := iter.Selector()
 		if !sel.IsString() {
 			continue
 		}
 		fieldVal := iter.Value()
-
 		if !attrMatches(fieldVal, attrName, re) {
 			continue
 		}
 
-		label := ast.NewIdent(sel.Unquoted())
-		val := fieldVal.Syntax(cue.Raw(), cue.InlineImports(true)).(ast.Expr)
-
-		// For struct-typed values, recursively filter the AST by attribute.
-		// Only filter actual structs — InlineImports may wrap non-struct
-		// values (lists, disjunctions) in a StructLit to hold let clauses
-		// for cross-package references; those must be kept intact.
-		if sl, ok := val.(*ast.StructLit); ok && fieldVal.IncompleteKind() == cue.StructKind {
-			val = filterAST(sl, attrName, re)
+		label := ctx.StringLabel(sel.Unquoted())
+		arc := src.LookupRaw(label)
+		if arc == nil {
+			continue
 		}
 
-		f := &ast.Field{Label: label, Value: val}
-		if iter.IsOptional() {
-			f.Constraint = token.OPTION
+		if fieldVal.IncompleteKind() == cue.StructKind {
+			filteredArc := buildFilteredVertex(ctx, arc.DerefValue(), fieldVal, attrName, re)
+			filteredArc.Label = arc.Label
+			filteredArc.ArcType = arc.ArcType
+			filtered.Arcs = append(filtered.Arcs, filteredArc)
+		} else {
+			filtered.Arcs = append(filtered.Arcs, arc)
 		}
-		result.Elts = append(result.Elts, f)
+
+		sl.Decls = append(sl.Decls, &adt.Field{Label: label, Value: &adt.Top{}})
 	}
-	return result, nil
+
+	filtered.AddStruct(sl)
+	return filtered
 }
 
-// filterAST walks an ast.StructLit and removes fields that don't match
-// the attribute filter. For nested struct values, it recurses.
-func filterAST(sl *ast.StructLit, attrName string, re *regexp.Regexp) *ast.StructLit {
-	result := &ast.StructLit{}
-	for _, elt := range sl.Elts {
-		f, ok := elt.(*ast.Field)
-		if !ok {
-			// Preserve let clauses, ellipsis, comments — they may be
-			// referenced by surviving fields.
-			result.Elts = append(result.Elts, elt)
+// fileToExpr extracts a single expression from an exported ast.File,
+// skipping package and import declarations. If the file contains only
+// a single embed (the common case), returns its expression directly.
+// Otherwise wraps all remaining declarations in a StructLit to
+// preserve any let clauses alongside the struct fields.
+func fileToExpr(f *ast.File) ast.Expr {
+	var decls []ast.Decl
+	for _, d := range f.Decls {
+		switch d.(type) {
+		case *ast.Package, *ast.ImportDecl:
 			continue
+		default:
+			decls = append(decls, d)
 		}
-		if !astAttrMatches(f, attrName, re) {
-			continue
-		}
-		nf := &ast.Field{
-			Label:      f.Label,
-			Value:      f.Value,
-			Constraint: f.Constraint,
-		}
-		if nested, ok := f.Value.(*ast.StructLit); ok {
-			nf.Value = filterAST(nested, attrName, re)
-		}
-		result.Elts = append(result.Elts, nf)
 	}
-	return result
+	if len(decls) == 1 {
+		if e, ok := decls[0].(*ast.EmbedDecl); ok {
+			return e.Expr
+		}
+	}
+	return &ast.StructLit{Elts: decls}
 }
 
 // attrMatches reports whether the field should be included based on
@@ -227,74 +243,4 @@ func attrMatches(v cue.Value, attrName string, re *regexp.Regexp) bool {
 		}
 	}
 	return false
-}
-
-// astAttrMatches reports whether an AST field should be included based
-// on its attributes. It mirrors the semantics of attrMatches but works
-// on parsed AST attribute nodes instead of cue.Value.
-//
-// When re is nil (HasAttr mode): the field is included only if it
-// carries the @attrName attribute.
-//
-// When re is non-nil (FilterByAttr mode): the field is included if
-// it has no @attrName attribute (unannotated = include-all default),
-// or if any pipe-separated segment of the attribute value matches re.
-func astAttrMatches(f *ast.Field, attrName string, re *regexp.Regexp) bool {
-	target := "@" + attrName + "("
-	var found *ast.Attribute
-	for _, a := range f.Attrs {
-		if strings.HasPrefix(a.Text, target) {
-			found = a
-			break
-		}
-	}
-
-	if re == nil {
-		return found != nil
-	}
-	if found == nil {
-		return true
-	}
-
-	// Extract the content between @attrName( and the closing ).
-	body := found.Text[len(target) : len(found.Text)-1]
-	// Parse attribute body into arguments, respecting key=value pairs.
-	for _, arg := range splitAttrArgs(body) {
-		// For keyed args like actor="customer", extract the value part.
-		actual := arg
-		if idx := strings.Index(arg, "="); idx >= 0 {
-			actual = arg[idx+1:]
-		}
-		// Strip surrounding quotes if present.
-		actual = strings.Trim(actual, "\"")
-		for _, seg := range strings.Split(actual, "|") {
-			if re.MatchString(strings.TrimSpace(seg)) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// splitAttrArgs splits an attribute body by commas, respecting quoted strings.
-func splitAttrArgs(body string) []string {
-	var args []string
-	var current strings.Builder
-	inQuote := false
-	for _, r := range body {
-		switch {
-		case r == '"':
-			inQuote = !inQuote
-			current.WriteRune(r)
-		case r == ',' && !inQuote:
-			args = append(args, strings.TrimSpace(current.String()))
-			current.Reset()
-		default:
-			current.WriteRune(r)
-		}
-	}
-	if current.Len() > 0 {
-		args = append(args, strings.TrimSpace(current.String()))
-	}
-	return args
 }
