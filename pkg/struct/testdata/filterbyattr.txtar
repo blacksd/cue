@@ -8,7 +8,7 @@ basic: struct.FilterByAttr({
 	email: "a@b"  @visibility("customer")
 }, "visibility", "customer")
 
-// Fields without the attribute are included by default.
+// Fields without the attribute at root level are excluded.
 noattr: struct.FilterByAttr({
 	name:  "Alice" @visibility("customer")
 	plain: "kept"
@@ -144,6 +144,15 @@ customerView: struct.FilterByAttr(#Config, "visibility", "customer")
 nestedDefCustomer: struct.FilterByAttr(#ServiceConfig, "visibility", "customer")
 nestedDefProduct:  struct.FilterByAttr(#ServiceConfig, "visibility", "product")
 
+// Unannotated parent struct included when descendant matches.
+unannotatedParent: struct.FilterByAttr({
+	wrapper: {
+		visible: string @visibility("customer")
+		hidden:  int    @visibility("internal")
+	}
+	plain: "dropped"
+}, "visibility", "customer")
+
 // HasAttr on struct with definition-typed field.
 hasattrDef: struct.HasAttr({
 	name:   string      @tagged()
@@ -158,10 +167,9 @@ basic: {
 	email: "a@b"
 }
 
-// Fields without the attribute are included by default.
+// Fields without the attribute at root level are excluded.
 noattr: {
-	name:  "Alice"
-	plain: "kept"
+	name: "Alice"
 }
 
 // Recursive: nested structs are filtered too.
@@ -169,13 +177,11 @@ nested: {
 	info: {
 		name: "Alice"
 	}
-	meta: "ok"
 }
 
 // Optional fields remain optional.
 optional: {
 	name?: string
-	city?: string
 }
 
 // All fields excluded produces empty struct.
@@ -247,12 +253,10 @@ namedRef: {
 productView: {
 	replicas:       int
 	maxConnections: int
-	name:           string
 }
 customerView: {
 	maxConnections: int
 	maxQos:         int
-	name:           string
 }
 
 // Nested definition references: struct-typed fields referencing definitions
@@ -298,6 +302,13 @@ nestedDefProduct: {
 		}
 	}
 	secret: string
+}
+
+// Unannotated parent struct included when descendant matches.
+unannotatedParent: {
+	wrapper: {
+		visible: string
+	}
 }
 
 // HasAttr on struct with definition-typed field.

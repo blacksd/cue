@@ -94,9 +94,11 @@ func hasAttr(ctx *adt.OpContext, s pkg.Schema, attrName string) (ast.Expr, error
 // or partial matching, include explicit anchors, e.g. "^cust" or
 // ".*partial.*".
 //
-// Fields without a @<attrName> attribute are included by default.
-// When an included field's value is a struct, the filter is applied
-// recursively.
+// Fields without a @<attrName> attribute at the top level are excluded,
+// unless they are structs containing matching descendants. Unannotated
+// fields nested inside a matching struct field are included (inherited
+// pass-through). When an included field's value is a struct, the filter
+// is applied recursively.
 //
 // Optional fields remain optional in the output.
 func FilterByAttr(s pkg.Schema, attrName, pattern string) (ast.Expr, error) {
@@ -128,7 +130,7 @@ func compilePattern(pattern string) (*regexp.Regexp, error) {
 // references for surviving fields — no orphaned let clauses.
 func filterVertexByAttr(ctx *adt.OpContext, v cue.Value, attrName string, re *regexp.Regexp) (ast.Expr, error) {
 	r, src := value.ToInternal(v)
-	filtered := buildFilteredVertex(ctx, src, v, attrName, re)
+	filtered := buildFilteredVertex(ctx, src, v, attrName, re, 0)
 
 	p := export.Profile{
 		Simplify:      true,
@@ -147,7 +149,7 @@ func filterVertexByAttr(ctx *adt.OpContext, v cue.Value, attrName string, re *re
 // buildFilteredVertex creates a new vertex containing only arcs whose fields
 // match the attribute filter. For struct-typed arcs, it recurses to filter
 // nested fields as well.
-func buildFilteredVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, attrName string, re *regexp.Regexp) *adt.Vertex {
+func buildFilteredVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, attrName string, re *regexp.Regexp, depth int) *adt.Vertex {
 	filtered := src.Clone()
 	filtered.Arcs = nil
 	filtered.Structs = nil
@@ -162,7 +164,13 @@ func buildFilteredVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, attrN
 			continue
 		}
 		fieldVal := iter.Value()
-		if !attrMatches(fieldVal, attrName, re) {
+
+		matched := attrMatches(fieldVal, attrName, re, depth)
+		if !matched && depth == 0 && fieldVal.IncompleteKind() == cue.StructKind {
+			// Unannotated struct at root: include if any descendant matches.
+			matched = hasMatchingDescendant(fieldVal, attrName, re)
+		}
+		if !matched {
 			continue
 		}
 
@@ -173,7 +181,7 @@ func buildFilteredVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, attrN
 		}
 
 		if fieldVal.IncompleteKind() == cue.StructKind {
-			filteredArc := buildFilteredVertex(ctx, arc.DerefValue(), fieldVal, attrName, re)
+			filteredArc := buildFilteredVertex(ctx, arc.DerefValue(), fieldVal, attrName, re, depth+1)
 			filteredArc.Label = arc.Label
 			filteredArc.ArcType = arc.ArcType
 			filtered.Arcs = append(filtered.Arcs, filteredArc)
@@ -186,6 +194,47 @@ func buildFilteredVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, attrN
 
 	filtered.AddStruct(sl)
 	return filtered
+}
+
+// hasMatchingDescendant reports whether any field nested inside v
+// explicitly carries a @attrName attribute whose value matches re.
+// Unannotated fields are not counted — only explicit attribute matches
+// qualify, so that an unannotated parent struct is included only when
+// a descendant is genuinely tagged for the target view.
+func hasMatchingDescendant(v cue.Value, attrName string, re *regexp.Regexp) bool {
+	iter, _ := v.Fields(cue.Optional(true))
+	for iter.Next() {
+		fv := iter.Value()
+		if hasExplicitMatch(fv, attrName, re) {
+			return true
+		}
+		if fv.IncompleteKind() == cue.StructKind && hasMatchingDescendant(fv, attrName, re) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasExplicitMatch reports whether the field carries @attrName and
+// a pipe-separated segment of the attribute value matches re.
+func hasExplicitMatch(v cue.Value, attrName string, re *regexp.Regexp) bool {
+	attr := v.Attribute(attrName)
+	if attr.Err() != nil {
+		return false
+	}
+	for i := range attr.NumArgs() {
+		key, val := attr.Arg(i)
+		actual := val
+		if val == "" {
+			actual = key
+		}
+		for _, seg := range strings.Split(actual, "|") {
+			if re.MatchString(strings.TrimSpace(seg)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // fileToExpr extracts a single expression from an exported ast.File,
@@ -217,10 +266,13 @@ func fileToExpr(f *ast.File) ast.Expr {
 // When re is nil (HasAttr mode): the field is included only if it
 // carries the @attrName attribute.
 //
-// When re is non-nil (FilterByAttr mode): the field is included if
-// it has no @attrName attribute (unannotated = include-all default),
-// or if any pipe-separated segment of the attribute value matches re.
-func attrMatches(v cue.Value, attrName string, re *regexp.Regexp) bool {
+// When re is non-nil (FilterByAttr mode): if the field has no
+// @attrName attribute, it is excluded at depth 0 (root level; the
+// caller handles struct-with-matching-descendants separately) and
+// included at depth > 0 (nested inside a matching parent). If the
+// attribute is present, the field is included when any pipe-separated
+// segment of the attribute value matches re.
+func attrMatches(v cue.Value, attrName string, re *regexp.Regexp, depth int) bool {
 	attr := v.Attribute(attrName)
 	hasAttr := attr.Err() == nil
 
@@ -228,7 +280,7 @@ func attrMatches(v cue.Value, attrName string, re *regexp.Regexp) bool {
 		return hasAttr
 	}
 	if !hasAttr {
-		return true
+		return depth > 0
 	}
 	for i := range attr.NumArgs() {
 		key, val := attr.Arg(i)
