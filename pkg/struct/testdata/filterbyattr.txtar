@@ -119,6 +119,38 @@ namedRef: struct.FilterByAttr({
 productView:  struct.FilterByAttr(#Config, "visibility", "product")
 customerView: struct.FilterByAttr(#Config, "visibility", "customer")
 
+// Nested definition references: struct-typed fields referencing definitions
+// must have all references fully inlined in the output.
+#Threshold: {
+	count:  int & >=1
+	window: int & >=1
+}
+
+#CircuitBreaker: {
+	"open-duration": int & >=0
+	threshold?:      #Threshold
+}
+
+#ServiceConfig: {
+	name:     string            @visibility("customer")
+	cache?: {
+		expiry: int & >=0       @visibility("customer")
+		secret: string          @visibility("internal")
+	}                           @visibility("customer")
+	breaker?: #CircuitBreaker   @visibility("product")
+	secret:   string            @visibility("product")
+}
+
+nestedDefCustomer: struct.FilterByAttr(#ServiceConfig, "visibility", "customer")
+nestedDefProduct:  struct.FilterByAttr(#ServiceConfig, "visibility", "product")
+
+// HasAttr on struct with definition-typed field.
+hasattrDef: struct.HasAttr({
+	name:   string      @tagged()
+	cache?: #Threshold  @tagged()
+	plain:  int
+}, "tagged")
+
 -- out/structs-v3 --
 // Basic: filter by attribute value with pipe-separated values.
 basic: {
@@ -221,4 +253,55 @@ customerView: {
 	maxConnections: int
 	maxQos:         int
 	name:           string
+}
+
+// Nested definition references: struct-typed fields referencing definitions
+// must have all references fully inlined in the output.
+#Threshold: {
+	count:  int & >=1
+	window: int & >=1
+}
+#CircuitBreaker: {
+	"open-duration": int & >=0
+	threshold?: {
+		count:  int & >=1
+		window: int & >=1
+	}
+}
+#ServiceConfig: {
+	name: string @visibility("customer")
+	cache?: {
+		expiry: int & >=0 @visibility("customer")
+		secret: string    @visibility("internal")
+	} @visibility("customer")
+	breaker?: {
+		"open-duration": int & >=0
+		threshold?: {
+			count:  int & >=1
+			window: int & >=1
+		}
+	} @visibility("product")
+	secret: string @visibility("product")
+}
+nestedDefCustomer: {
+	name: string
+	cache?: {
+		expiry: int & >=0
+	}
+}
+nestedDefProduct: {
+	breaker?: {
+		"open-duration": int & >=0
+		threshold?: {
+			count:  int & >=1
+			window: int & >=1
+		}
+	}
+	secret: string
+}
+
+// HasAttr on struct with definition-typed field.
+hasattrDef: {
+	name: string
+	cache?: {}
 }

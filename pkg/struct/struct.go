@@ -125,6 +125,11 @@ func compilePattern(pattern string) (*regexp.Regexp, error) {
 // (FilterByAttr mode), fields without @attrName are included by default
 // and fields with @attrName are included only when a pipe-separated
 // segment of the attribute value matches re.
+//
+// Field values are obtained via Value.Syntax with InlineImports on each
+// individual field value, ensuring all cross-package references are
+// resolved inline. For struct-typed field values, the resulting AST is
+// further filtered recursively.
 func filterStruct(v cue.Value, attrName string, re *regexp.Regexp) (*ast.StructLit, error) {
 	result := &ast.StructLit{}
 	iter, err := v.Fields(cue.Optional(true))
@@ -143,15 +148,11 @@ func filterStruct(v cue.Value, attrName string, re *regexp.Regexp) (*ast.StructL
 		}
 
 		label := ast.NewIdent(sel.Unquoted())
-		var val ast.Expr
-		if fieldVal.IncompleteKind() == cue.StructKind {
-			filtered, err := filterStruct(fieldVal, attrName, re)
-			if err != nil {
-				return nil, err
-			}
-			val = filtered
-		} else {
-			val = fieldVal.Syntax(cue.Raw(), cue.InlineImports(true)).(ast.Expr)
+		val := fieldVal.Syntax(cue.Raw(), cue.InlineImports(true)).(ast.Expr)
+
+		// For struct-typed values, recursively filter the AST by attribute.
+		if sl, ok := val.(*ast.StructLit); ok {
+			val = filterAST(sl, attrName, re)
 		}
 
 		f := &ast.Field{Label: label, Value: val}
@@ -163,7 +164,33 @@ func filterStruct(v cue.Value, attrName string, re *regexp.Regexp) (*ast.StructL
 	return result, nil
 }
 
-// attrMatches reports whether the field should be included.
+// filterAST walks an ast.StructLit and removes fields that don't match
+// the attribute filter. For nested struct values, it recurses.
+func filterAST(sl *ast.StructLit, attrName string, re *regexp.Regexp) *ast.StructLit {
+	result := &ast.StructLit{}
+	for _, elt := range sl.Elts {
+		f, ok := elt.(*ast.Field)
+		if !ok {
+			continue
+		}
+		if !astAttrMatches(f, attrName, re) {
+			continue
+		}
+		nf := &ast.Field{
+			Label:      f.Label,
+			Value:      f.Value,
+			Constraint: f.Constraint,
+		}
+		if nested, ok := f.Value.(*ast.StructLit); ok {
+			nf.Value = filterAST(nested, attrName, re)
+		}
+		result.Elts = append(result.Elts, nf)
+	}
+	return result
+}
+
+// attrMatches reports whether the field should be included based on
+// the cue.Value's attributes.
 //
 // When re is nil (HasAttr mode): the field is included only if it
 // carries the @attrName attribute.
@@ -171,8 +198,6 @@ func filterStruct(v cue.Value, attrName string, re *regexp.Regexp) (*ast.StructL
 // When re is non-nil (FilterByAttr mode): the field is included if
 // it has no @attrName attribute (unannotated = include-all default),
 // or if any pipe-separated segment of the attribute value matches re.
-// Only values are checked, never keys — for keyed args like
-// actor="product|customer" only "product|customer" is inspected.
 func attrMatches(v cue.Value, attrName string, re *regexp.Regexp) bool {
 	attr := v.Attribute(attrName)
 	hasAttr := attr.Err() == nil
@@ -185,8 +210,6 @@ func attrMatches(v cue.Value, attrName string, re *regexp.Regexp) bool {
 	}
 	for i := range attr.NumArgs() {
 		key, val := attr.Arg(i)
-		// Attr.Arg returns (value, "") for positional args (API quirk)
-		// and (key, value) for keyed args. Extract the actual value.
 		actual := val
 		if val == "" {
 			actual = key
@@ -198,4 +221,74 @@ func attrMatches(v cue.Value, attrName string, re *regexp.Regexp) bool {
 		}
 	}
 	return false
+}
+
+// astAttrMatches reports whether an AST field should be included based
+// on its attributes. It mirrors the semantics of attrMatches but works
+// on parsed AST attribute nodes instead of cue.Value.
+//
+// When re is nil (HasAttr mode): the field is included only if it
+// carries the @attrName attribute.
+//
+// When re is non-nil (FilterByAttr mode): the field is included if
+// it has no @attrName attribute (unannotated = include-all default),
+// or if any pipe-separated segment of the attribute value matches re.
+func astAttrMatches(f *ast.Field, attrName string, re *regexp.Regexp) bool {
+	target := "@" + attrName + "("
+	var found *ast.Attribute
+	for _, a := range f.Attrs {
+		if strings.HasPrefix(a.Text, target) {
+			found = a
+			break
+		}
+	}
+
+	if re == nil {
+		return found != nil
+	}
+	if found == nil {
+		return true
+	}
+
+	// Extract the content between @attrName( and the closing ).
+	body := found.Text[len(target) : len(found.Text)-1]
+	// Parse attribute body into arguments, respecting key=value pairs.
+	for _, arg := range splitAttrArgs(body) {
+		// For keyed args like actor="customer", extract the value part.
+		actual := arg
+		if idx := strings.Index(arg, "="); idx >= 0 {
+			actual = arg[idx+1:]
+		}
+		// Strip surrounding quotes if present.
+		actual = strings.Trim(actual, "\"")
+		for _, seg := range strings.Split(actual, "|") {
+			if re.MatchString(strings.TrimSpace(seg)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// splitAttrArgs splits an attribute body by commas, respecting quoted strings.
+func splitAttrArgs(body string) []string {
+	var args []string
+	var current strings.Builder
+	inQuote := false
+	for _, r := range body {
+		switch {
+		case r == '"':
+			inQuote = !inQuote
+			current.WriteRune(r)
+		case r == ',' && !inQuote:
+			args = append(args, strings.TrimSpace(current.String()))
+			current.Reset()
+		default:
+			current.WriteRune(r)
+		}
+	}
+	if current.Len() > 0 {
+		args = append(args, strings.TrimSpace(current.String()))
+	}
+	return args
 }
