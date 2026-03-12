@@ -94,11 +94,15 @@ func hasAttr(ctx *adt.OpContext, s pkg.Schema, attrName string) (ast.Expr, error
 // or partial matching, include explicit anchors, e.g. "^cust" or
 // ".*partial.*".
 //
-// Fields without a @<attrName> attribute at the top level are excluded,
-// unless they are structs containing matching descendants. Unannotated
-// fields nested inside a matching struct field are included (inherited
-// pass-through). When an included field's value is a struct, the filter
-// is applied recursively.
+// At the top level, fields with an attribute whose value does not match
+// are excluded (even if descendants would match — the parent's explicit
+// annotation takes precedence). Unannotated top-level fields are excluded
+// unless they are structs that contain a descendant with an explicit
+// matching attribute.
+//
+// Inside a matching struct, unannotated fields are included by default
+// (inherited pass-through), while fields with a non-matching attribute
+// are still excluded. The filter is applied recursively to nested structs.
 //
 // Optional fields remain optional in the output.
 func FilterByAttr(s pkg.Schema, attrName, pattern string) (ast.Expr, error) {
