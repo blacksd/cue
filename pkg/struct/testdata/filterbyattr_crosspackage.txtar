@@ -1,0 +1,71 @@
+-- cue.mod/module.cue --
+module: "test.example"
+language: version: "v0.9.0"
+
+-- schema/config.cue --
+package schema
+
+#Cache: {
+	expiry: int & >=0
+	maxSize: int & >=1
+}
+
+#CircuitBreaker: {
+	"open-duration": int & >=0
+	threshold?: {
+		count:  int & >=1
+		window: int & >=1
+	}
+}
+
+#Config: {
+	name:     string            @visibility("customer")
+	cache?:   #Cache            @visibility("customer")
+	breaker?: #CircuitBreaker   @visibility("product")
+	secret:   string            @visibility("product")
+}
+
+-- in.cue --
+import (
+	"struct"
+	"test.example/schema:schema"
+)
+
+// Cross-package FilterByAttr: customer view.
+customerView: struct.FilterByAttr(schema.#Config, "visibility", "customer")
+
+// Cross-package FilterByAttr: product view.
+productView: struct.FilterByAttr(schema.#Config, "visibility", "product")
+
+// Cross-package HasAttr: only annotated fields.
+annotated: struct.HasAttr(schema.#Config, "visibility")
+
+-- out/structs-v3 --
+// Cross-package FilterByAttr: customer view.
+customerView: {
+	name: string
+	cache?: {
+		expiry:  int & >=0
+		maxSize: int & >=1
+	}
+}
+
+// Cross-package FilterByAttr: product view.
+productView: {
+	breaker?: {
+		"open-duration": int & >=0
+		threshold?: {
+			count:  int & >=1
+			window: int & >=1
+		}
+	}
+	secret: string
+}
+
+// Cross-package HasAttr: only annotated fields.
+annotated: {
+	name: string
+	cache?: {}
+	breaker?: {}
+	secret: string
+}

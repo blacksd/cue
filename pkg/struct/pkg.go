@@ -40,5 +40,34 @@ var p = &pkg.Package{
 				c.Ret, c.Err = MaxFields(object, n)
 			}
 		},
+	}, {
+		Name: "HasAttr",
+		Params: []pkg.Param{
+			{Kind: adt.TopKind},
+			{Kind: adt.StringKind},
+		},
+		Result:      adt.TopKind,
+		NonConcrete: true,
+		Func: func(c *pkg.CallCtxt) {
+			s, attrName := c.Schema(0), c.String(1)
+			if c.Do() {
+				c.Ret, c.Err = hasAttr(c.OpContext(), s, attrName)
+			}
+		},
+	}, {
+		Name: "FilterByAttr",
+		Params: []pkg.Param{
+			{Kind: adt.TopKind},
+			{Kind: adt.StringKind},
+			{Kind: adt.StringKind},
+		},
+		Result:      adt.TopKind,
+		NonConcrete: true,
+		Func: func(c *pkg.CallCtxt) {
+			s, attrName, pattern := c.Schema(0), c.String(1), c.String(2)
+			if c.Do() {
+				c.Ret, c.Err = filterByAttr(c.OpContext(), s, attrName, pattern)
+			}
+		},
 	}},
 }

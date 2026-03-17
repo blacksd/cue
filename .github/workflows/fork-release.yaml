@@ -1,0 +1,99 @@
+# Fork release workflow for patched CUE binary.
+#
+# Builds and releases a CUE binary containing all fork feature branches:
+#   - feat/koala-xml-encoder (XML encoder with @koala(container) support)
+#   - feat/struct-filter-by-attr (attribute-based schema filtering)
+#
+# Release preparation:
+#   git checkout -b release/v0.16.0-fork.1 feat/koala-xml-encoder
+#   git merge feat/struct-filter-by-attr --no-edit
+#   # resolve any conflicts, then validate:
+#   #   go build ./cmd/cue && go test ./pkg/struct/... ./encoding/xml/...
+#   git tag v0.16.0-fork.1
+#   git push origin release/v0.16.0-fork.1 v0.16.0-fork.1
+#
+# IMPORTANT: The release/* branch is a disposable merge target.
+# Never delete or modify the feat/* branches — they are the base
+# for upstream contributions.
+#
+# Tag convention: v<upstream-version>-fork.<increment>
+
+name: Fork Release
+
+on:
+  push:
+    tags:
+      - 'v*-fork*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.0'
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath -ldflags="-s -w" -o cue ./cmd/cue
+
+      - name: Package tarball
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          archive="cue_${tag}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
+          tar czf "${archive}" cue LICENSE
+          echo "ARCHIVE=${archive}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cue_${{ github.ref_name }}_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: ${{ env.ARCHIVE }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum *.tar.gz > checksums_sha256.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            artifacts/*.tar.gz
+            artifacts/checksums_sha256.txt

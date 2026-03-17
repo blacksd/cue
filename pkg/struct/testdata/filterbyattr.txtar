@@ -1,0 +1,377 @@
+-- in.cue --
+import "struct"
+
+// Basic: filter by attribute value with pipe-separated values.
+basic: struct.FilterByAttr({
+	name: "Alice" @visibility("product|customer")
+	age:  30      @visibility("internal")
+	email: "a@b"  @visibility("customer")
+}, "visibility", "customer")
+
+// Fields without the attribute at root level are excluded.
+noattr: struct.FilterByAttr({
+	name:  "Alice" @visibility("customer")
+	plain: "kept"
+	age:   30      @visibility("internal")
+}, "visibility", "customer")
+
+// Recursive: nested structs are filtered too.
+nested: struct.FilterByAttr({
+	info: {
+		name: "Alice" @visibility("customer")
+		ssn:  "123"   @visibility("internal")
+	}
+	meta: "ok"
+}, "visibility", "customer")
+
+// Optional fields remain optional.
+optional: struct.FilterByAttr({
+	name?: string @visibility("customer")
+	age?:  int    @visibility("internal")
+	city?: string
+}, "visibility", "customer")
+
+// All fields excluded produces empty struct.
+empty: struct.FilterByAttr({
+	a: 1 @visibility("internal")
+	b: 2 @visibility("internal")
+}, "visibility", "customer")
+
+// Regex pattern: match multiple values.
+regex: struct.FilterByAttr({
+	a: 1 @visibility("customer")
+	b: 2 @visibility("product")
+	c: 3 @visibility("internal")
+}, "visibility", "customer|product")
+
+// Regex pattern: prefix match with explicit anchor.
+regexPrefix: struct.FilterByAttr({
+	a: 1 @tier("starter")
+	b: 2 @tier("standard")
+	c: 3 @tier("enterprise")
+}, "tier", "^sta")
+
+// Regex: auto-anchored pattern rejects partial matches.
+regexExact: struct.FilterByAttr({
+	a: 1 @tier("starter")
+	b: 2 @tier("start")
+	c: 3 @tier("pro-starter")
+}, "tier", "starter")
+
+// Regex: suffix match with explicit anchor.
+regexSuffix: struct.FilterByAttr({
+	a: 1 @env("staging")
+	b: 2 @env("production")
+	c: 3 @env("testing")
+}, "env", "ing$")
+
+// Regex: dot is treated as regex metachar, not literal.
+regexDot: struct.FilterByAttr({
+	a: 1 @version("v2.0")
+	b: 2 @version("v2x0")
+	c: 3 @version("v3.0")
+}, "version", "v2.0")
+
+// Keyed attribute values: only the value part is matched, never the key.
+keyedValue: struct.FilterByAttr({
+	a: 1 @visibility(actor="customer")
+	b: 2 @visibility(actor="internal")
+}, "visibility", "customer")
+
+// Key name must not match as a value.
+keyNotValue: struct.FilterByAttr({
+	a: 1 @visibility(actor="customer")
+	b: 2 @visibility(actor="internal")
+}, "visibility", "actor")
+
+// HasAttr: include only fields that carry the attribute.
+hasattr: struct.HasAttr({
+	name: "Alice" @deprecated()
+	age:  30
+	city: "NYC"   @deprecated()
+}, "deprecated")
+
+// HasAttr recursive: nested fields without the attribute are excluded.
+hasattrNested: struct.HasAttr({
+	info: {
+		name: "Alice" @marker(yes)
+		age:  30
+	} @marker(yes)
+	meta: "ok"
+}, "marker")
+
+// Named type references must resolve in the output.
+#Constraint: int & >=1 & <=100
+
+namedRef: struct.FilterByAttr({
+	a: #Constraint @visibility("customer")
+	b: string      @visibility("product")
+}, "visibility", "customer")
+
+// Real-world use case: product and customer views of a config definition.
+#Config: {
+	replicas:       int    @visibility("product")
+	maxConnections: int    @visibility("product|customer")
+	maxQos:         int    @visibility("customer")
+	name:           string
+}
+
+productView:  struct.FilterByAttr(#Config, "visibility", "product")
+customerView: struct.FilterByAttr(#Config, "visibility", "customer")
+
+// Nested definition references: struct-typed fields referencing definitions
+// must have all references fully inlined in the output.
+#Threshold: {
+	count:  int & >=1
+	window: int & >=1
+}
+
+#CircuitBreaker: {
+	"open-duration": int & >=0
+	threshold?:      #Threshold
+}
+
+#ServiceConfig: {
+	name:     string            @visibility("customer")
+	cache?: {
+		expiry: int & >=0       @visibility("customer")
+		secret: string          @visibility("internal")
+	}                           @visibility("customer")
+	breaker?: #CircuitBreaker   @visibility("product")
+	secret:   string            @visibility("product")
+}
+
+nestedDefCustomer: struct.FilterByAttr(#ServiceConfig, "visibility", "customer")
+nestedDefProduct:  struct.FilterByAttr(#ServiceConfig, "visibility", "product")
+
+// Unannotated parent struct included when descendant matches.
+unannotatedParent: struct.FilterByAttr({
+	wrapper: {
+		visible: string @visibility("customer")
+		hidden:  int    @visibility("internal")
+	}
+	plain: "dropped"
+}, "visibility", "customer")
+
+// Unannotated struct at root with no matching descendant is excluded.
+unannotatedNoMatch: struct.FilterByAttr({
+	wrapper: {
+		a: int @visibility("internal")
+		b: int @visibility("internal")
+	}
+	plain: "also dropped"
+}, "visibility", "customer")
+
+// Conflicting parent/child: parent blocks access to differently-tagged child.
+conflictingTags: struct.FilterByAttr({
+	data: {
+		inner: string @visibility("customer")
+	} @visibility("product")
+}, "visibility", "customer")
+
+// Unannotated non-struct fields at depth > 0 pass through.
+nestedPassthrough: struct.FilterByAttr({
+	config: {
+		name:    string @visibility("customer")
+		version: int
+		debug:   bool
+	} @visibility("customer")
+}, "visibility", "customer")
+
+// Deeply nested: unannotated structs propagate matching descendants upward.
+deepNested: struct.FilterByAttr({
+	level1: {
+		level2: {
+			target: string @visibility("customer")
+			noise:  int    @visibility("internal")
+		}
+	}
+}, "visibility", "customer")
+
+// HasAttr on struct with definition-typed field.
+hasattrDef: struct.HasAttr({
+	name:   string      @tagged()
+	cache?: #Threshold  @tagged()
+	plain:  int
+}, "tagged")
+
+-- out/structs-v3 --
+// Basic: filter by attribute value with pipe-separated values.
+basic: {
+	name:  "Alice"
+	email: "a@b"
+}
+
+// Fields without the attribute at root level are excluded.
+noattr: {
+	name: "Alice"
+}
+
+// Recursive: nested structs are filtered too.
+nested: {
+	info: {
+		name: "Alice"
+	}
+}
+
+// Optional fields remain optional.
+optional: {
+	name?: string
+}
+
+// All fields excluded produces empty struct.
+empty: {}
+
+// Regex pattern: match multiple values.
+regex: {
+	a: 1
+	b: 2
+}
+
+// Regex pattern: prefix match with explicit anchor.
+regexPrefix: {
+	a: 1
+	b: 2
+}
+
+// Regex: auto-anchored pattern rejects partial matches.
+regexExact: {
+	a: 1
+}
+
+// Regex: suffix match with explicit anchor.
+regexSuffix: {
+	a: 1
+	c: 3
+}
+
+// Regex: dot is treated as regex metachar, not literal.
+regexDot: {
+	a: 1
+	b: 2
+}
+
+// Keyed attribute values: only the value part is matched, never the key.
+keyedValue: {
+	a: 1
+}
+
+// Key name must not match as a value.
+keyNotValue: {}
+
+// HasAttr: include only fields that carry the attribute.
+hasattr: {
+	name: "Alice"
+	city: "NYC"
+}
+
+// HasAttr recursive: nested fields without the attribute are excluded.
+hasattrNested: {
+	info: {
+		name: "Alice"
+	}
+}
+
+// Named type references must resolve in the output.
+#Constraint: uint & >=1 & <=100
+namedRef: {
+	a: uint & >=1 & <=100
+}
+
+// Real-world use case: product and customer views of a config definition.
+#Config: {
+	replicas:       int @visibility("product")
+	maxConnections: int @visibility("product|customer")
+	maxQos:         int @visibility("customer")
+	name:           string
+}
+productView: {
+	replicas:       int
+	maxConnections: int
+}
+customerView: {
+	maxConnections: int
+	maxQos:         int
+}
+
+// Nested definition references: struct-typed fields referencing definitions
+// must have all references fully inlined in the output.
+#Threshold: {
+	count:  int & >=1
+	window: int & >=1
+}
+#CircuitBreaker: {
+	"open-duration": int & >=0
+	threshold?: {
+		count:  int & >=1
+		window: int & >=1
+	}
+}
+#ServiceConfig: {
+	name: string @visibility("customer")
+	cache?: {
+		expiry: int & >=0 @visibility("customer")
+		secret: string    @visibility("internal")
+	} @visibility("customer")
+	breaker?: {
+		"open-duration": int & >=0
+		threshold?: {
+			count:  int & >=1
+			window: int & >=1
+		}
+	} @visibility("product")
+	secret: string @visibility("product")
+}
+nestedDefCustomer: {
+	name: string
+	cache?: {
+		expiry: int & >=0
+	}
+}
+nestedDefProduct: {
+	breaker?: {
+		"open-duration": int & >=0
+		threshold?: {
+			count:  int & >=1
+			window: int & >=1
+		}
+	}
+	secret: string
+}
+
+// Unannotated parent struct included when descendant matches.
+unannotatedParent: {
+	wrapper: {
+		visible: string
+	}
+}
+
+// Unannotated struct at root with no matching descendant is excluded.
+unannotatedNoMatch: {}
+
+// Conflicting parent/child: parent blocks access to differently-tagged child.
+conflictingTags: {}
+
+// Unannotated non-struct fields at depth > 0 pass through.
+nestedPassthrough: {
+	config: {
+		name:    string
+		version: int
+		debug:   bool
+	}
+}
+
+// Deeply nested: unannotated structs propagate matching descendants upward.
+deepNested: {
+	level1: {
+		level2: {
+			target: string
+		}
+	}
+}
+
+// HasAttr on struct with definition-typed field.
+hasattrDef: {
+	name: string
+	cache?: {}
+}
