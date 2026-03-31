@@ -269,6 +269,122 @@ func fileToExpr(f *ast.File) ast.Expr {
 	return &ast.StructLit{Elts: decls}
 }
 
+// TransformKeys returns a copy of s with all field names transformed by
+// the named transformation function. It operates recursively on nested
+// structs. Optional fields remain optional. Attributes are stripped from
+// the output (consistent with FilterByAttr behavior).
+//
+// Supported transforms:
+//   - "kebabToCamel": converts kebab-case field names to camelCase.
+//   - "sanitizeKoala": strips the "$" prefix from field names (koala XML
+//     encoding artifact).
+//
+// Returns an error for unrecognized transform names.
+func TransformKeys(s pkg.Schema, transformName string) (ast.Expr, error) {
+	ctx := value.OpContext(s)
+	return transformKeys(ctx, s, transformName)
+}
+
+func transformKeys(ctx *adt.OpContext, s pkg.Schema, transformName string) (ast.Expr, error) {
+	fn, err := resolveTransform(transformName)
+	if err != nil {
+		return nil, err
+	}
+
+	r, src := value.ToInternal(s)
+	transformed := buildTransformedVertex(ctx, src, s, fn)
+
+	p := export.Profile{
+		Simplify:      true,
+		ShowOptional:  true,
+		InlineImports: true,
+	}
+
+	f, exportErr := p.Vertex(r, "_", transformed)
+	if exportErr != nil {
+		return nil, fmt.Errorf("TransformKeys: export error: %v", exportErr)
+	}
+
+	return fileToExpr(f), nil
+}
+
+// buildTransformedVertex creates a new vertex with all arc labels
+// transformed by fn. For struct-typed arcs, it recurses to transform
+// nested field names as well.
+func buildTransformedVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, fn func(string) string) *adt.Vertex {
+	transformed := src.Clone()
+	transformed.Arcs = nil
+	transformed.Structs = nil
+	transformed.BaseValue = &adt.StructMarker{}
+
+	sl := &adt.StructLit{}
+
+	iter, _ := v.Fields(cue.Optional(true))
+	for iter.Next() {
+		sel := iter.Selector()
+		if !sel.IsString() {
+			continue
+		}
+		fieldVal := iter.Value()
+
+		oldName := sel.Unquoted()
+		newName := fn(oldName)
+		newLabel := ctx.StringLabel(newName)
+
+		oldLabel := ctx.StringLabel(oldName)
+		arc := src.LookupRaw(oldLabel)
+		if arc == nil {
+			continue
+		}
+
+		if fieldVal.IncompleteKind() == cue.StructKind {
+			transformedArc := buildTransformedVertex(ctx, arc.DerefValue(), fieldVal, fn)
+			transformedArc.Label = newLabel
+			transformedArc.ArcType = arc.ArcType
+			transformed.Arcs = append(transformed.Arcs, transformedArc)
+		} else {
+			cloned := *arc
+			cloned.Label = newLabel
+			transformed.Arcs = append(transformed.Arcs, &cloned)
+		}
+
+		sl.Decls = append(sl.Decls, &adt.Field{Label: newLabel, Value: &adt.Top{}})
+	}
+
+	transformed.AddStruct(sl)
+	return transformed
+}
+
+// resolveTransform returns the transform function for the given name,
+// or an error if the name is not recognized.
+func resolveTransform(name string) (func(string) string, error) {
+	switch name {
+	case "kebabToCamel":
+		return kebabToCamel, nil
+	case "sanitizeKoala":
+		return sanitizeKoala, nil
+	default:
+		return nil, fmt.Errorf("TransformKeys: unknown transform %q", name)
+	}
+}
+
+// kebabToCamel converts kebab-case to camelCase.
+func kebabToCamel(s string) string {
+	parts := strings.Split(s, "-")
+	for i := 1; i < len(parts); i++ {
+		if len(parts[i]) > 0 {
+			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+// sanitizeKoala strips koala XML encoding artifacts from field names.
+// Currently handles: $ prefix on XML attribute fields.
+func sanitizeKoala(s string) string {
+	return strings.TrimPrefix(s, "$")
+}
+
 // attrMatches reports whether the field should be included based on
 // the cue.Value's attributes.
 //

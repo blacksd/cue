@@ -1,0 +1,210 @@
+-- in.cue --
+import "struct"
+
+// Basic kebab-to-camel conversion.
+basic: struct.TransformKeys({
+	"max-queue-size": int
+	"db-type":        string
+	name:             string
+}, "kebabToCamel")
+
+// Recursive transformation of nested structs.
+nested: struct.TransformKeys({
+	"circuit-breaker": {
+		"open-duration": int
+		"failure-threshold": {
+			count:            int
+			"sliding-window": int
+		}
+	}
+}, "kebabToCamel")
+
+// Optional fields remain optional.
+optional: struct.TransformKeys({
+	"max-connections"?: int
+	"db-host"?:         string
+	name:               string
+}, "kebabToCamel")
+
+// sanitizeKoala: strip dollar prefix.
+sanitizeBasic: struct.TransformKeys({
+	"$listener": string
+	"$name":     string
+	"db-host":   string
+	name:        string
+}, "sanitizeKoala")
+
+// sanitizeKoala recursive.
+sanitizeNested: struct.TransformKeys({
+	"$listener": string
+	config: {
+		"$name": string
+		port:    int
+	}
+}, "sanitizeKoala")
+
+// Composition: sanitizeKoala then kebabToCamel.
+composed: struct.TransformKeys(struct.TransformKeys({
+	"$listener":   string
+	"$name":       string
+	"db-host":     string
+	"max-retries": int
+}, "sanitizeKoala"), "kebabToCamel")
+
+// kebabToCamel does not strip dollar prefix.
+kebabKeepsDollar: struct.TransformKeys({
+	"$listener": string
+	"db-host":   string
+}, "kebabToCamel")
+
+// Already-camelCase names pass through unchanged.
+passthrough: struct.TransformKeys({
+	name:    string
+	enabled: bool
+	port:    int
+}, "kebabToCamel")
+
+// Definition with type references.
+#Threshold: {
+	count:  int & >=1
+	window: int & >=1
+}
+
+defRef: struct.TransformKeys({
+	"open-duration":       int
+	"failure-threshold"?: #Threshold
+}, "kebabToCamel")
+
+// Empty struct.
+empty: struct.TransformKeys({}, "kebabToCamel")
+
+// Invalid transform name.
+invalid: struct.TransformKeys({a: 1}, "unknownTransform")
+
+// Combined with FilterByAttr.
+#Config: {
+	"retained-messages"?: {
+		enabled?: bool @visibility("customer")
+	} @visibility("customer")
+	"queued-messages"?: {
+		"max-queue-size"?: int @visibility("product")
+	} @visibility("product")
+	"keep-alive"?: {
+		"max-keep-alive"?:  int  @visibility("customer")
+		"allow-unlimited"?: bool @visibility("customer")
+	} @visibility("customer")
+}
+
+combined: struct.TransformKeys(
+	struct.FilterByAttr(#Config, "visibility", "customer"),
+	"kebabToCamel",
+)
+-- out/structs-v3 --
+Errors:
+invalid: error in call to struct.TransformKeys: TransformKeys: unknown transform "unknownTransform":
+    ./in.cue:81:10
+
+Result:
+// Basic kebab-to-camel conversion.
+basic: {
+	maxQueueSize: int
+	dbType:       string
+	name:         string
+}
+
+// Recursive transformation of nested structs.
+nested: {
+	circuitBreaker: {
+		openDuration: int
+		failureThreshold: {
+			count:         int
+			slidingWindow: int
+		}
+	}
+}
+
+// Optional fields remain optional.
+optional: {
+	maxConnections?: int
+	dbHost?:         string
+	name:            string
+}
+
+// sanitizeKoala: strip dollar prefix.
+sanitizeBasic: {
+	listener:  string
+	name:      string
+	"db-host": string
+}
+
+// sanitizeKoala recursive.
+sanitizeNested: {
+	listener: string
+	config: {
+		name: string
+		port: int
+	}
+}
+
+// Composition: sanitizeKoala then kebabToCamel.
+composed: {
+	listener:   string
+	name:       string
+	dbHost:     string
+	maxRetries: int
+}
+
+// kebabToCamel does not strip dollar prefix.
+kebabKeepsDollar: {
+	$listener: string
+	dbHost:    string
+}
+
+// Already-camelCase names pass through unchanged.
+passthrough: {
+	name:    string
+	enabled: bool
+	port:    int
+}
+
+// Definition with type references.
+#Threshold: {
+	count:  int & >=1
+	window: int & >=1
+}
+defRef: {
+	openDuration: int
+	failureThreshold?: {
+		count:  int & >=1
+		window: int & >=1
+	}
+}
+
+// Empty struct.
+empty: {}
+
+// Invalid transform name.
+invalid: _|_ // invalid: error in call to struct.TransformKeys: TransformKeys: unknown transform "unknownTransform"
+
+// Combined with FilterByAttr.
+#Config: {
+	"retained-messages"?: {
+		enabled?: bool @visibility("customer")
+	} @visibility("customer")
+	"queued-messages"?: {
+		"max-queue-size"?: int @visibility("product")
+	} @visibility("product")
+	"keep-alive"?: {
+		"max-keep-alive"?:  int  @visibility("customer")
+		"allow-unlimited"?: bool @visibility("customer")
+	} @visibility("customer")
+}
+combined: {
+	retainedMessages?: {
+		enabled?: bool
+	}
+	keepAlive?: {
+		maxKeepAlive?:   int
+		allowUnlimited?: bool
+	}
+}

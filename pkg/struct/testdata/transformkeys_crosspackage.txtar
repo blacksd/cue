@@ -1,0 +1,35 @@
+-- cue.mod/module.cue --
+module: "test.example"
+language: version: "v0.9.0"
+
+-- schema/config.cue --
+package schema
+
+#DbConfiguration: {
+	"db-type":     string
+	"db-name":     string
+	"db-host":     string
+	"db-port":     int
+	"db-username": string
+	"db-password": string
+	"db-schema"?:  string
+}
+
+-- in.cue --
+import (
+	"struct"
+	"test.example/schema:schema"
+)
+
+crossPkg: struct.TransformKeys(schema.#DbConfiguration, "kebabToCamel")
+
+-- out/structs-v3 --
+crossPkg: {
+	dbType:     string
+	dbName:     string
+	dbHost:     string
+	dbPort:     int
+	dbUsername: string
+	dbPassword: string
+	dbSchema?:  string
+}

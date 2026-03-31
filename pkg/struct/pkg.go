@@ -69,5 +69,19 @@ var p = &pkg.Package{
 				c.Ret, c.Err = filterByAttr(c.OpContext(), s, attrName, pattern)
 			}
 		},
+	}, {
+		Name: "TransformKeys",
+		Params: []pkg.Param{
+			{Kind: adt.TopKind},
+			{Kind: adt.StringKind},
+		},
+		Result:      adt.TopKind,
+		NonConcrete: true,
+		Func: func(c *pkg.CallCtxt) {
+			s, transformName := c.Schema(0), c.String(1)
+			if c.Do() {
+				c.Ret, c.Err = transformKeys(c.OpContext(), s, transformName)
+			}
+		},
 	}},
 }
