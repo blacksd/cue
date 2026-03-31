@@ -43,12 +43,36 @@ sanitizeNested: struct.TransformKeys({
 	}
 }, "sanitizeKoala")
 
-// Composition: sanitizeKoala then kebabToCamel.
+// sanitizeKoala: drop text content marker ($$), keep other $ fields.
+sanitizeDropTextContent: struct.TransformKeys({
+	"$$":        string
+	"$listener": string
+	name:        string
+}, "sanitizeKoala")
+
+// sanitizeKoala: drop XML namespace declarations.
+sanitizeDropXmlns: struct.TransformKeys({
+	"$xmlns:xsi":                       string
+	"$xsi:noNamespaceSchemaLocation":   string
+	"$listener":                        string
+	name:                               string
+}, "sanitizeKoala")
+
+// sanitizeKoala: $+kebab hybrid strips $ but preserves hyphens.
+sanitizeKebabHybrid: struct.TransformKeys({
+	"$clear-client-password-on-connection": bool
+	"$listener":                            string
+	name:                                   string
+}, "sanitizeKoala")
+
+// Composition: sanitizeKoala then kebabToCamel, including $$ drop and $+kebab hybrid.
 composed: struct.TransformKeys(struct.TransformKeys({
-	"$listener":   string
-	"$name":       string
-	"db-host":     string
-	"max-retries": int
+	"$listener":                            string
+	"$name":                                string
+	"$$":                                   string
+	"$clear-client-password-on-connection": bool
+	"db-host":                              string
+	"max-retries":                          int
 }, "sanitizeKoala"), "kebabToCamel")
 
 // kebabToCamel does not strip dollar prefix.
@@ -102,7 +126,7 @@ combined: struct.TransformKeys(
 -- out/structs-v3 --
 Errors:
 invalid: error in call to struct.TransformKeys: TransformKeys: unknown transform "unknownTransform":
-    ./in.cue:81:10
+    ./in.cue:105:10
 
 Result:
 // Basic kebab-to-camel conversion.
@@ -146,12 +170,32 @@ sanitizeNested: {
 	}
 }
 
-// Composition: sanitizeKoala then kebabToCamel.
+// sanitizeKoala: drop text content marker ($$), keep other $ fields.
+sanitizeDropTextContent: {
+	listener: string
+	name:     string
+}
+
+// sanitizeKoala: drop XML namespace declarations.
+sanitizeDropXmlns: {
+	listener: string
+	name:     string
+}
+
+// sanitizeKoala: $+kebab hybrid strips $ but preserves hyphens.
+sanitizeKebabHybrid: {
+	"clear-client-password-on-connection": bool
+	listener:                              string
+	name:                                  string
+}
+
+// Composition: sanitizeKoala then kebabToCamel, including $$ drop and $+kebab hybrid.
 composed: {
-	listener:   string
-	name:       string
-	dbHost:     string
-	maxRetries: int
+	listener:                        string
+	name:                            string
+	clearClientPasswordOnConnection: bool
+	dbHost:                          string
+	maxRetries:                      int
 }
 
 // kebabToCamel does not strip dollar prefix.

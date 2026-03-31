@@ -274,10 +274,15 @@ func fileToExpr(f *ast.File) ast.Expr {
 // structs. Optional fields remain optional. Attributes are stripped from
 // the output (consistent with FilterByAttr behavior).
 //
+// When a transform returns an empty string, the field is dropped from the
+// output (same semantics as FilterByAttr excluding a field).
+//
 // Supported transforms:
 //   - "kebabToCamel": converts kebab-case field names to camelCase.
-//   - "sanitizeKoala": strips the "$" prefix from field names (koala XML
-//     encoding artifact).
+//   - "sanitizeKoala": strips koala XML encoding artifacts from field names.
+//     Drops text content markers ($$) and XML namespace declarations
+//     ($xmlns:*, $xsi:*). Strips the $ prefix from remaining $-prefixed
+//     fields, preserving any hyphens for later kebabToCamel conversion.
 //
 // Returns an error for unrecognized transform names.
 func TransformKeys(s pkg.Schema, transformName string) (ast.Expr, error) {
@@ -329,6 +334,9 @@ func buildTransformedVertex(ctx *adt.OpContext, src *adt.Vertex, v cue.Value, fn
 
 		oldName := sel.Unquoted()
 		newName := fn(oldName)
+		if newName == "" {
+			continue
+		}
 		newLabel := ctx.StringLabel(newName)
 
 		oldLabel := ctx.StringLabel(oldName)
@@ -380,8 +388,17 @@ func kebabToCamel(s string) string {
 }
 
 // sanitizeKoala strips koala XML encoding artifacts from field names.
-// Currently handles: $ prefix on XML attribute fields.
+// Returns "" (drop) for text content markers ($$) and XML namespace
+// declarations ($xmlns:*, $xsi:*). Strips the $ prefix from all other
+// $-prefixed fields, including $+kebab hybrids like
+// "$clear-client-password-on-connection".
 func sanitizeKoala(s string) string {
+	if s == "$$" {
+		return ""
+	}
+	if strings.HasPrefix(s, "$xmlns:") || strings.HasPrefix(s, "$xsi:") {
+		return ""
+	}
 	return strings.TrimPrefix(s, "$")
 }
 
